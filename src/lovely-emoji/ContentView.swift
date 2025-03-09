@@ -6,56 +6,105 @@
 //
 
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+  @State private var inputText = ""
+  @State private var emojiText = ""
+  @State private var isLoading = false
 
-    var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        } detail: {
-            Text("Select an item")
-        }
-    }
+  var body: some View {
+    NavigationView {
+      VStack {
+        TextField("Enter text here...", text: $inputText)
+          .textFieldStyle(RoundedBorderTextFieldStyle())
+          .padding()
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
+        Button(action: {
+          convertTextToEmoji()
+        }) {
+          Text("Convert to Emoji")
+            .padding()
+            .background(Color.blue)
+            .foregroundColor(.white)
+            .cornerRadius(8)
         }
-    }
+        .padding()
 
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
+        if isLoading {
+          ProgressView()
+            .padding()
         }
+
+        Text(emojiText)
+          .font(.largeTitle)
+          .padding()
+
+        Spacer()
+      }
+      .navigationTitle("Text to Emoji")
     }
+  }
+
+  func convertTextToEmoji() {
+    // Ensure the user entered some text
+    guard !inputText.isEmpty else { return }
+    isLoading = true
+
+    // Configure the request for the OpenAI API
+    let apiKey = "YOUR_OPENAI_API_KEY"
+    let url = URL(string: "https://api.openai.com/v1/completions")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+
+    // Create a prompt that instructs the API to convert text to emojis
+    let prompt = "Convert the following text to emojis: \(inputText)"
+    let json: [String: Any] = [
+      "model": "text-davinci-003",
+      "prompt": prompt,
+      "max_tokens": 60,
+      "temperature": 0.7
+    ]
+
+    // Serialize the JSON payload
+    guard let jsonData = try? JSONSerialization.data(withJSONObject: json) else {
+      isLoading = false
+      return
+    }
+    request.httpBody = jsonData
+
+    // Send the API request
+    URLSession.shared.dataTask(with: request) { data, response, error in
+      defer {
+        DispatchQueue.main.async {
+          isLoading = false
+        }
+      }
+      if let error = error {
+        print("Error: \(error.localizedDescription)")
+        return
+      }
+      guard let data = data else { return }
+      do {
+        // Parse the API response
+        if let jsonResponse = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let choices = jsonResponse["choices"] as? [[String: Any]],
+           let firstChoice = choices.first,
+           let textResult = firstChoice["text"] as? String {
+          DispatchQueue.main.async {
+            emojiText = textResult.trimmingCharacters(in: .whitespacesAndNewlines)
+          }
+        }
+      } catch {
+        print("Error parsing response: \(error.localizedDescription)")
+      }
+    }.resume()
+  }
 }
 
-#Preview {
+struct ContentView_Previews: PreviewProvider {
+  static var previews: some View {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+  }
 }
